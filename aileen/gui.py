@@ -58,8 +58,7 @@ class AileenGUI:
             )
             return
 
-        self._add_message(config.bot_name, self.convo.greeting())
-        self._set_status("Ready")
+        self._say_greeting()
 
     # ----- UI construction -------------------------------------------------
 
@@ -160,6 +159,28 @@ class AileenGUI:
 
     # ----- actions ---------------------------------------------------------
 
+    def _say_greeting(self) -> None:
+        greeting = self.convo.greeting()
+        self._add_message(self.config.bot_name, greeting)
+        self._set_status("Ready")
+        if self.speak_var.get() and self._ensure_tts():
+            self._speak_async(greeting)
+
+    def _speak_async(self, text: str) -> None:
+        """Speak a line aloud on a background thread (used for the greeting)."""
+        self._set_busy(True, f"{self.config.bot_name} is speaking…")
+
+        def work() -> None:
+            try:
+                pcm, sample_rate = self.tts.synthesize(text)
+                play_pcm16(pcm, sample_rate)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                self._ui(self._on_error, f"Voice error: {exc}")
+                return
+            self._ui(self._set_busy, False, "Ready")
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _on_send(self) -> None:
         if self.busy or self.convo is None:
             return
@@ -245,8 +266,7 @@ class AileenGUI:
         self.transcript.config(state=tk.NORMAL)
         self.transcript.delete("1.0", tk.END)
         self.transcript.config(state=tk.DISABLED)
-        self._add_message(self.config.bot_name, self.convo.greeting())
-        self._set_status("Ready")
+        self._say_greeting()
 
 
 def main() -> int:

@@ -8,8 +8,15 @@ from .base import LLMProvider, Message
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str = "gpt-4o", temperature: float = 0.4):
-        self._client = OpenAI(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o",
+        temperature: float = 0.4,
+        timeout: float = 30.0,
+        max_retries: int = 2,
+    ):
+        self._client = OpenAI(api_key=api_key, timeout=timeout, max_retries=max_retries)
         self._model = model
         self._temperature = temperature
 

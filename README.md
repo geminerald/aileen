@@ -19,8 +19,8 @@ front-end — the brain, voice, and knowledge layers don't change.
                                                │
                        ┌───────────────────────┼───────────────────────┐
                        ▼                        ▼                       ▼
-                  LLM "brain"            knowledge base            (voice = ElevenLabs)
-              OpenAI  /  Claude        data/knowledge/*.md
+                  LLM "brain"            knowledge base            voice (TTS)
+              OpenAI  /  Claude        data/knowledge/*.md       OpenAI / ElevenLabs
 ```
 
 Every layer sits behind a small interface, so each is swappable:
@@ -28,7 +28,7 @@ Every layer sits behind a small interface, so each is swappable:
 | Layer            | Interface                          | Default            | Swap to            |
 |------------------|------------------------------------|--------------------|--------------------|
 | Brain (LLM)      | `aileen.llm.LLMProvider`           | OpenAI (ChatGPT)   | Anthropic (Claude) |
-| Voice (TTS)      | `aileen.voice.tts.TTSProvider`     | ElevenLabs         | —                  |
+| Voice (TTS)      | `aileen.voice.tts.TTSProvider`     | OpenAI             | ElevenLabs         |
 | Hearing (STT)    | `aileen.voice.stt.STTProvider`     | OpenAI (Whisper)   | —                  |
 | Knowledge        | `aileen.knowledge.KnowledgeBase`   | static files       | embeddings / RAG   |
 
@@ -54,9 +54,12 @@ cp .env.example .env        # Windows: copy .env.example .env
 
 Fill in `.env`:
 
-- `OPENAI_API_KEY` — required (used as the default brain **and** for speech-to-text)
-- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` — required for the voice
+- `OPENAI_API_KEY` — required (the default brain, speech-to-text, **and** the default voice)
 - `ANTHROPIC_API_KEY` — only if you set `AILEEN_LLM_PROVIDER=anthropic`
+- `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` — only if you set `AILEEN_TTS_PROVIDER=elevenlabs` (requires an ElevenLabs **paid** plan; their free tier blocks API voices)
+
+By default the voice uses OpenAI (`AILEEN_TTS_PROVIDER=openai`), so a single
+OpenAI key powers the whole bot — brain, hearing, and voice.
 
 ## Run
 
@@ -75,14 +78,15 @@ aileen-gui             # opens a window: type or "Hold to Talk", replies spoken 
 ```
 
 (`python -m aileen.gui` works too.) The GUI drives the same conversation engine
-as the CLI. Untick **Speak replies** for a quiet, text-only test (no ElevenLabs
-key needed); voice input still needs `OPENAI_API_KEY` for transcription.
+as the CLI. Untick **Speak replies** for a quiet, text-only test; voice input
+still needs `OPENAI_API_KEY` for transcription.
 
-### Switching the brain
+### Switching the brain or the voice
 
 ```bash
 # in .env
-AILEEN_LLM_PROVIDER=anthropic   # or "openai" (default)
+AILEEN_LLM_PROVIDER=anthropic   # brain: "openai" (default) or "anthropic"
+AILEEN_TTS_PROVIDER=elevenlabs  # voice: "openai" (default) or "elevenlabs"
 ```
 
 ## What the bot knows

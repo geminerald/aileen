@@ -17,6 +17,7 @@ from .voice.stt.base import STTProvider
 from .voice.stt.openai_stt import OpenAISTT
 from .voice.tts.base import TTSProvider
 from .voice.tts.elevenlabs_tts import ElevenLabsTTS
+from .voice.tts.openai_tts import OpenAITTS
 
 
 class ConfigError(RuntimeError):
@@ -38,15 +39,23 @@ def build_llm(config: Config) -> LLMProvider:
 
 
 def build_tts(config: Config) -> TTSProvider:
-    if not config.elevenlabs_api_key:
-        raise ConfigError("ELEVENLABS_API_KEY is not set (needed for the voice).")
-    if not config.elevenlabs_voice_id:
-        raise ConfigError("ELEVENLABS_VOICE_ID is not set (pick a voice in ElevenLabs).")
-    return ElevenLabsTTS(
-        config.elevenlabs_api_key,
-        config.elevenlabs_voice_id,
-        config.elevenlabs_model_id,
-        config.tts_sample_rate,
+    if config.tts_provider == "openai":
+        if not config.openai_api_key:
+            raise ConfigError("OPENAI_API_KEY is not set (needed for the OpenAI voice).")
+        return OpenAITTS(config.openai_api_key, config.openai_tts_model, config.openai_tts_voice)
+    if config.tts_provider == "elevenlabs":
+        if not config.elevenlabs_api_key:
+            raise ConfigError("ELEVENLABS_API_KEY is not set (needed for the ElevenLabs voice).")
+        if not config.elevenlabs_voice_id:
+            raise ConfigError("ELEVENLABS_VOICE_ID is not set (pick a voice in ElevenLabs).")
+        return ElevenLabsTTS(
+            config.elevenlabs_api_key,
+            config.elevenlabs_voice_id,
+            config.elevenlabs_model_id,
+            config.tts_sample_rate,
+        )
+    raise ConfigError(
+        f"Unknown AILEEN_TTS_PROVIDER '{config.tts_provider}'. Use 'openai' or 'elevenlabs'."
     )
 
 

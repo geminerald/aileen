@@ -19,6 +19,12 @@ class Config:
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-4-6"
 
+    # Which voice engine to use: "openai" (default) or "elevenlabs".
+    tts_provider: str = "openai"
+
+    openai_tts_model: str = "tts-1"
+    openai_tts_voice: str = "nova"
+
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str = "eleven_turbo_v2_5"
@@ -41,6 +47,9 @@ class Config:
             stt_model=os.getenv("STT_MODEL", "whisper-1"),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
             anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            tts_provider=os.getenv("AILEEN_TTS_PROVIDER", "openai").lower(),
+            openai_tts_model=os.getenv("OPENAI_TTS_MODEL", "tts-1"),
+            openai_tts_voice=os.getenv("OPENAI_TTS_VOICE", "alloy"),
             elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY"),
             elevenlabs_voice_id=os.getenv("ELEVENLABS_VOICE_ID"),
             elevenlabs_model_id=os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5"),

@@ -2,11 +2,16 @@
 
 from pathlib import Path
 
+import pytest
+
 from aileen.config import Config
 from aileen.conversation import Conversation
+from aileen.factory import ConfigError, build_tts
 from aileen.knowledge.static import StaticFileKnowledge
 from aileen.llm.base import LLMProvider, Message
 from aileen.prompts import build_system_prompt
+from aileen.voice.tts.elevenlabs_tts import ElevenLabsTTS
+from aileen.voice.tts.openai_tts import OpenAITTS
 
 
 class FakeLLM(LLMProvider):
@@ -61,3 +66,22 @@ def test_conversation_threads_knowledge_into_prompt_and_keeps_history():
 def test_greeting_uses_bot_name():
     convo = Conversation(FakeLLM(), StaticFileKnowledge("data/knowledge"), Config(bot_name="Aileen"))
     assert "Aileen" in convo.greeting()
+
+
+def test_build_tts_selects_openai_by_default():
+    config = Config(tts_provider="openai", openai_api_key="sk-dummy")
+    assert isinstance(build_tts(config), OpenAITTS)
+
+
+def test_build_tts_selects_elevenlabs_when_configured():
+    config = Config(
+        tts_provider="elevenlabs",
+        elevenlabs_api_key="el-dummy",
+        elevenlabs_voice_id="voice123",
+    )
+    assert isinstance(build_tts(config), ElevenLabsTTS)
+
+
+def test_build_tts_rejects_unknown_provider():
+    with pytest.raises(ConfigError):
+        build_tts(Config(tts_provider="bogus"))
