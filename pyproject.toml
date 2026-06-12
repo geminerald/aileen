@@ -23,6 +23,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 aileen = "aileen.app:main"
+aileen-gui = "aileen.gui:main"
 
 [tool.setuptools.packages.find]
 include = ["aileen*"]

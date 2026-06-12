@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import tempfile
 
 from .config import Config
 from .conversation import Conversation
@@ -42,16 +41,8 @@ def _emit(text: str, bot_name: str, tts) -> None:
         _speak(tts, text)
 
 
-def _write_temp_wav(samples, sample_rate: int) -> str:
-    import soundfile as sf
-
-    fd, path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    sf.write(path, samples, sample_rate, subtype="PCM_16")
-    return path
-
-
 def run_voice(config: Config, speak: bool = True) -> None:
+    from .audio.files import write_temp_wav
     from .audio.recorder import MicRecorder
 
     llm = build_llm(config)
@@ -70,7 +61,7 @@ def run_voice(config: Config, speak: bool = True) -> None:
             print("(didn't catch any audio — try again)")
             continue
 
-        wav_path = _write_temp_wav(samples, config.mic_sample_rate)
+        wav_path = write_temp_wav(samples, config.mic_sample_rate)
         try:
             user_text = stt.transcribe(wav_path)
         finally:

@@ -68,6 +68,16 @@ aileen --text --mute   # pure text chat, no audio at all (no ElevenLabs needed)
 
 (`python -m aileen` works too.) Say or type "goodbye" to end the call.
 
+### Desktop GUI (easiest way to test on a PC)
+
+```bash
+aileen-gui             # opens a window: type or "Hold to Talk", replies spoken aloud
+```
+
+(`python -m aileen.gui` works too.) The GUI drives the same conversation engine
+as the CLI. Untick **Speak replies** for a quiet, text-only test (no ElevenLabs
+key needed); voice input still needs `OPENAI_API_KEY` for transcription.
+
 ### Switching the brain
 
 ```bash
@@ -100,6 +110,7 @@ The tests use a fake LLM and need no API keys, network, or audio hardware.
 ```
 aileen/
   app.py            # CLI / terminal front-end (voice + text loops)
+  gui.py            # desktop GUI front-end (Tkinter)
   conversation.py   # the front-end-agnostic dialogue engine
   config.py         # settings from environment / .env
   factory.py        # builds providers from config
