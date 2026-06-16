@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from elevenlabs.client import ElevenLabs
 
 from .base import TTSProvider
@@ -28,13 +30,22 @@ class ElevenLabsTTS(TTSProvider):
         self._model_id = model_id
         self._sample_rate = sample_rate
 
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
     def synthesize(self, text: str) -> tuple[bytes, int]:
-        stream = self._client.text_to_speech.convert(
+        # convert() yields chunks of bytes; collect them into one buffer.
+        pcm = b"".join(self.stream(text))
+        return pcm, self._sample_rate
+
+    def stream(self, text: str) -> Iterator[bytes]:
+        chunks = self._client.text_to_speech.convert(
             voice_id=self._voice_id,
             model_id=self._model_id,
             text=text,
             output_format=f"pcm_{self._sample_rate}",
         )
-        # convert() yields chunks of bytes; collect them into one buffer.
-        pcm = b"".join(stream)
-        return pcm, self._sample_rate
+        for chunk in chunks:
+            if chunk:
+                yield chunk

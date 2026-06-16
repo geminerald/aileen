@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, scrolledtext, ttk
 
 from .audio.files import write_temp_wav
@@ -23,8 +24,14 @@ from .audio.recorder import MicRecorder
 from .config import Config
 from .conversation import Conversation
 from .factory import ConfigError, build_knowledge, build_llm, build_stt, build_tts
+from .speech import DEFAULT_FILLERS, FillerBank, speak_stream
+from .timing import ReplyTiming, ReplyTimingLog
 
 _USER = "You"
+
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
 
 class AileenGUI:
@@ -39,10 +46,17 @@ class AileenGUI:
         self.convo: Conversation | None = None
         self.stt = None
         self.tts = None
+        self.fillers: FillerBank | None = None
 
-        self.recorder = MicRecorder(sample_rate=config.mic_sample_rate)
+        self.recorder = MicRecorder(
+            sample_rate=config.mic_sample_rate, device=config.mic_device
+        )
         self.recording = False
         self.busy = False
+
+        self.timing_log = (
+            ReplyTimingLog(config.timing_log_path) if config.timing_log_path else None
+        )
 
         self._build_widgets()
 
@@ -73,6 +87,7 @@ class AileenGUI:
         self.transcript.pack(fill=tk.BOTH, expand=True)
         self.transcript.tag_config("user_name", foreground="#1a73e8", font=("Segoe UI", 11, "bold"))
         self.transcript.tag_config("bot_name", foreground="#188038", font=("Segoe UI", 11, "bold"))
+        self.transcript.tag_config("timestamp", foreground="#999", font=("Segoe UI", 9))
 
         self.status = tk.StringVar(value="Starting…")
         ttk.Label(outer, textvariable=self.status, foreground="#666").pack(
@@ -115,8 +130,31 @@ class AileenGUI:
     def _add_message(self, speaker: str, text: str) -> None:
         tag = "user" if speaker == _USER else "bot"
         self.transcript.config(state=tk.NORMAL)
+        self.transcript.insert(tk.END, f"[{_timestamp()}] ", ("timestamp",))
         self.transcript.insert(tk.END, f"{speaker}: ", (f"{tag}_name",))
         self.transcript.insert(tk.END, f"{text}\n\n")
+        self.transcript.see(tk.END)
+        self.transcript.config(state=tk.DISABLED)
+
+    # Incremental variants, for showing a reply as it streams in sentence by
+    # sentence: _begin once, _append per sentence, _end to close the block.
+    def _begin_message(self, speaker: str) -> None:
+        tag = "user" if speaker == _USER else "bot"
+        self.transcript.config(state=tk.NORMAL)
+        self.transcript.insert(tk.END, f"[{_timestamp()}] ", ("timestamp",))
+        self.transcript.insert(tk.END, f"{speaker}: ", (f"{tag}_name",))
+        self.transcript.see(tk.END)
+        self.transcript.config(state=tk.DISABLED)
+
+    def _append_message_text(self, text: str) -> None:
+        self.transcript.config(state=tk.NORMAL)
+        self.transcript.insert(tk.END, text)
+        self.transcript.see(tk.END)
+        self.transcript.config(state=tk.DISABLED)
+
+    def _end_message(self) -> None:
+        self.transcript.config(state=tk.NORMAL)
+        self.transcript.insert(tk.END, "\n\n")
         self.transcript.see(tk.END)
         self.transcript.config(state=tk.DISABLED)
 
@@ -148,7 +186,6 @@ class AileenGUI:
             return True
         try:
             self.tts = build_tts(self.config)
-            return True
         except ConfigError as exc:
             messagebox.showwarning(
                 "Voice unavailable",
@@ -156,6 +193,15 @@ class AileenGUI:
             )
             self.speak_var.set(False)
             return False
+        self._init_fillers()
+        return True
+
+    def _init_fillers(self) -> None:
+        """Pre-render filler acknowledgements in the background, if enabled."""
+        if not self.config.speak_fillers or self.fillers is not None:
+            return
+        self.fillers = FillerBank(self.tts, self.config.filler_phrases or DEFAULT_FILLERS)
+        threading.Thread(target=self.fillers.prewarm, daemon=True).start()
 
     # ----- actions ---------------------------------------------------------
 
@@ -238,26 +284,66 @@ class AileenGUI:
         if speak and not self._ensure_tts():
             speak = False
 
-        self._set_busy(True, f"{self.config.bot_name} is thinking…")
+        bot_name = self.config.bot_name
+        self._set_busy(True, f"{bot_name} is thinking…")
 
         def work() -> None:
+            began = False
+            started = datetime.now()
+            marks: dict[str, datetime] = {}
+            mode = "voice" if (speak and self.tts is not None) else "text"
             try:
-                reply = self.convo.handle(user_text)
+                if speak and self.tts is not None:
+                    # Stream the reply and speak it sentence-by-sentence, so she
+                    # starts talking before the whole answer is generated.
+                    self._ui(self._set_status, f"{bot_name} is replying…")
+                    self._ui(self._begin_message, bot_name)
+                    began = True
+                    prelude = self.fillers.random_prelude() if self.fillers else None
+                    reply = speak_stream(
+                        self.convo.handle_stream(user_text),
+                        self.tts,
+                        lambda s: self._ui(self._append_message_text, s + " "),
+                        prelude=prelude,
+                        on_first_audio=lambda: marks.setdefault("audio", datetime.now()),
+                        on_first_answer=lambda: marks.setdefault("answer", datetime.now()),
+                    )
+                else:
+                    reply = self.convo.handle(user_text)
+                    self._ui(self._add_message, bot_name, reply)
             except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                self._ui(self._on_error, f"Brain error: {exc}")
+                if began:
+                    self._ui(self._end_message)
+                self._ui(self._on_error, f"Reply error: {exc}")
                 return
-            self._ui(self._add_message, self.config.bot_name, reply)
-            if speak and self.tts is not None:
-                self._ui(self._set_status, f"{self.config.bot_name} is speaking…")
-                try:
-                    pcm, sample_rate = self.tts.synthesize(reply)
-                    play_pcm16(pcm, sample_rate)
-                except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                    self._ui(self._on_error, f"Voice error: {exc}")
-                    return
-            self._ui(self._set_busy, False, "Ready")
+            if began:
+                self._ui(self._end_message)
+            timing = ReplyTiming(
+                started=started,
+                ended=datetime.now(),
+                first_audio=marks.get("audio"),
+                first_answer=marks.get("answer"),
+                mode=mode,
+            )
+            self._ui(self._set_busy, False, self._timing_status(timing))
+            if self.timing_log is not None:
+                self.timing_log.record(timing, reply)
 
         threading.Thread(target=work, daemon=True).start()
+
+    @staticmethod
+    def _timing_status(timing: ReplyTiming) -> str:
+        """A one-line latency summary for the status bar."""
+        if timing.mode != "voice":
+            return f"Ready · reply in {timing.total:.1f}s"
+
+        def fmt(offset: float | None) -> str:
+            return "n/a" if offset is None else f"{offset:.1f}s"
+
+        return (
+            f"Ready · first sound {fmt(timing.time_to_first_audio)} · "
+            f"answer {fmt(timing.time_to_answer)} · total {timing.total:.1f}s"
+        )
 
     def _on_reset(self) -> None:
         if self.busy or self.llm is None:

@@ -7,6 +7,8 @@ Swap via ``AILEEN_TTS_PROVIDER=openai`` (the default) or ``=elevenlabs``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from openai import OpenAI
 
 from .base import TTSProvider
@@ -30,6 +32,10 @@ class OpenAITTS(TTSProvider):
         self._model = model
         self._voice = voice
 
+    @property
+    def sample_rate(self) -> int:
+        return self.SAMPLE_RATE
+
     def synthesize(self, text: str) -> tuple[bytes, int]:
         with self._client.audio.speech.with_streaming_response.create(
             model=self._model,
@@ -39,3 +45,14 @@ class OpenAITTS(TTSProvider):
         ) as response:
             pcm = response.read()
         return pcm, self.SAMPLE_RATE
+
+    def stream(self, text: str) -> Iterator[bytes]:
+        with self._client.audio.speech.with_streaming_response.create(
+            model=self._model,
+            voice=self._voice,
+            input=text,
+            response_format="pcm",
+        ) as response:
+            for chunk in response.iter_bytes():
+                if chunk:
+                    yield chunk

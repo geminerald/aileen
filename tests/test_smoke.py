@@ -10,6 +10,10 @@ from aileen.factory import ConfigError, build_tts
 from aileen.knowledge.static import StaticFileKnowledge
 from aileen.llm.base import LLMProvider, Message
 from aileen.prompts import build_system_prompt
+from datetime import datetime, timedelta
+
+from aileen.speech import FillerBank, speak_stream, split_sentences
+from aileen.timing import ReplyTiming, ReplyTimingLog
 from aileen.voice.tts.elevenlabs_tts import ElevenLabsTTS
 from aileen.voice.tts.openai_tts import OpenAITTS
 
@@ -85,3 +89,155 @@ def test_build_tts_selects_elevenlabs_when_configured():
 def test_build_tts_rejects_unknown_provider():
     with pytest.raises(ConfigError):
         build_tts(Config(tts_provider="bogus"))
+
+
+def test_split_sentences_groups_streamed_deltas():
+    # Deltas split mid-word, like real token streaming.
+    deltas = ["Hello ", "there. How can ", "I help", " you? Visit 9.5", " now.\n", "Bye"]
+    assert list(split_sentences(deltas)) == [
+        "Hello there.",
+        "How can I help you?",
+        "Visit 9.5 now.",
+        "Bye",
+    ]
+
+
+class _FakeTTS:
+    """Captures each sentence it's asked to speak; emits dummy PCM."""
+
+    sample_rate = 24000
+
+    def __init__(self):
+        self.spoken = []
+
+    def synthesize(self, text):
+        return (b"\x00\x00", self.sample_rate)
+
+    def stream(self, text):
+        self.spoken.append(text)
+        yield b"\x00\x00" * 4
+
+
+def test_speak_stream_speaks_each_sentence(monkeypatch):
+    writes = []
+
+    class FakeSpeaker:
+        def __init__(self, sample_rate):
+            assert sample_rate == 24000
+
+        def write(self, pcm):
+            writes.append(pcm)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("aileen.speech.PcmSpeaker", FakeSpeaker)
+    tts = _FakeTTS()
+    seen = []
+
+    full = speak_stream(iter(["One. ", "Two. ", "Three."]), tts, on_sentence=seen.append)
+
+    assert full == "One. Two. Three."
+    # Text is revealed / played back in order...
+    assert seen == ["One.", "Two.", "Three."]
+    assert len(writes) == 3
+    # ...even though synthesis runs concurrently (so call order isn't fixed).
+    assert sorted(tts.spoken) == ["One.", "Three.", "Two."]
+
+
+def test_filler_bank_prewarms_and_serves_ready_phrase():
+    tts = _FakeTTS()
+    bank = FillerBank(tts, phrases=["Sure.", "One moment."])
+    # Nothing rendered yet -> no prelude available.
+    assert bank.random_prelude() is None
+    bank.prewarm()
+    prelude = bank.random_prelude()
+    assert prelude is not None
+    text, pcm = prelude
+    assert text in {"Sure.", "One moment."}
+    assert pcm  # non-empty rendered audio
+
+
+def test_speak_stream_plays_prelude_first(monkeypatch):
+    order = []
+
+    class FakeSpeaker:
+        def __init__(self, sample_rate):
+            pass
+
+        def write(self, pcm):
+            order.append(pcm)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("aileen.speech.PcmSpeaker", FakeSpeaker)
+    tts = _FakeTTS()
+    seen = []
+
+    speak_stream(
+        iter(["Hello there."]),
+        tts,
+        on_sentence=seen.append,
+        prelude=("Sure.", b"PRELUDE"),
+    )
+
+    # Prelude text is revealed first, and its audio is written before the reply.
+    assert seen[0] == "Sure."
+    assert order[0] == b"PRELUDE"
+
+
+def test_speak_stream_fires_timing_hooks(monkeypatch):
+    monkeypatch.setattr("aileen.speech.PcmSpeaker", lambda sample_rate: _NullSpeaker())
+    tts = _FakeTTS()
+    events = []
+
+    speak_stream(
+        iter(["Hi there. All good."]),
+        tts,
+        on_first_audio=lambda: events.append("audio"),
+        on_first_answer=lambda: events.append("answer"),
+    )
+
+    # Each hook fires exactly once; without a prelude they fire together.
+    assert events.count("audio") == 1
+    assert events.count("answer") == 1
+
+
+class _NullSpeaker:
+    def write(self, pcm):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_reply_timing_offsets():
+    start = datetime(2026, 6, 16, 14, 0, 0)
+    timing = ReplyTiming(
+        started=start,
+        ended=start + timedelta(seconds=8),
+        first_audio=start + timedelta(seconds=0.2),
+        first_answer=start + timedelta(seconds=1.9),
+    )
+    assert timing.time_to_first_audio == pytest.approx(0.2)
+    assert timing.time_to_answer == pytest.approx(1.9)
+    assert timing.total == pytest.approx(8.0)
+
+
+def test_reply_timing_log_appends_line(tmp_path):
+    log = ReplyTimingLog(tmp_path / "logs" / "timing.log")
+    start = datetime(2026, 6, 16, 14, 0, 0)
+    timing = ReplyTiming(
+        started=start,
+        ended=start + timedelta(seconds=5),
+        first_audio=start + timedelta(seconds=0.3),
+        first_answer=start + timedelta(seconds=2.0),
+    )
+    line = log.record(timing, "We are open 9am to 5pm.")
+
+    written = (tmp_path / "logs" / "timing.log").read_text(encoding="utf-8")
+    assert line + "\n" == written
+    assert "first-sound +0.30s" in line
+    assert "answer +2.00s" in line
+    assert "total 5.00s" in line

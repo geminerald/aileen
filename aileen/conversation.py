@@ -8,6 +8,8 @@ class.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from .config import Config
 from .knowledge.base import KnowledgeBase
 from .llm.base import LLMProvider, Message
@@ -37,3 +39,20 @@ class Conversation:
         reply = self._llm.respond(system_prompt, self._history)
         self._history.append(Message("assistant", reply))
         return reply
+
+    def handle_stream(self, user_text: str) -> Iterator[str]:
+        """Like :meth:`handle`, but yield the reply in deltas as it's generated.
+
+        History is updated with the user turn up front and the full assistant
+        reply once the stream is exhausted, so it stays consistent with
+        :meth:`handle`.
+        """
+        context = self._knowledge.context_for(user_text)
+        system_prompt = build_system_prompt(self._config.bot_name, context)
+
+        self._history.append(Message("user", user_text))
+        parts: list[str] = []
+        for delta in self._llm.stream(system_prompt, self._history):
+            parts.append(delta)
+            yield delta
+        self._history.append(Message("assistant", "".join(parts).strip()))
